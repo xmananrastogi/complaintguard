@@ -1,0 +1,14 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.env
+venv/
+.venv/
+*.db
+*.sqlite
+.ipynb_checkpoints/
+.DS_Store
+dist/
+build/
+*.xlsm
+!data/sample/*.xlsm

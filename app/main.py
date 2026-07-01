@@ -248,7 +248,7 @@ def run():
         "Duration", "Hours", "Status", "Penalty", "Flag",
     ]
 
-    styled = table_df.style.applymap(style_status, subset=["Status"])
+    styled = table_df.style.map(style_status, subset=["Status"])
     st.dataframe(styled, use_container_width=True, height=400)
 
     # ----------------------------------------------------------

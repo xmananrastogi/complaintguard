@@ -15,6 +15,8 @@ from typing import List, Optional, Tuple
 
 import pandas as pd
 
+from app.config_loader import column_aliases, revisit_window as get_revisit_window
+
 # --------------------------------------------------------------
 # column names as they appear in the excel header row.
 # change these if the export format is different.
@@ -31,6 +33,45 @@ COL_ENGINEER = "Engineer Name"
 COL_NATURE = "Nature of Complaint"
 COL_DU_SERIAL = "DU serial No"
 COL_COMP_MODE = "Comp Mode"
+
+# --------------------------------------------------------------
+# column aliases — what the user's file might call each column.
+# the detector tries each alias in order until it finds a match.
+# add more aliases here if new export formats show up.
+# --------------------------------------------------------------
+COLUMN_ALIASES = column_aliases()
+
+
+def detect_columns(df: pd.DataFrame) -> dict:
+    """
+    figures out which column in the uploaded file maps to which field
+    we need. tries aliases in order, case-insensitive partial match.
+
+    returns a dict like {"complaint_id": "Complaint ID", "sla": "SLA", ...}
+    any field that couldnt be matched gets None.
+    """
+    actual_cols = [str(c).strip().lower() for c in df.columns]
+    actual_map = {str(c).strip().lower(): str(c).strip() for c in df.columns}
+
+    result = {}
+    for field, aliases in COLUMN_ALIASES.items():
+        matched = None
+        for alias in aliases:
+            alias_lower = alias.strip().lower()
+            # exact match
+            if alias_lower in actual_map:
+                matched = actual_map[alias_lower]
+                break
+            # partial match — alias is a substring of column name
+            for actual_lower, actual_orig in actual_map.items():
+                if alias_lower in actual_lower or actual_lower in alias_lower:
+                    matched = actual_orig
+                    break
+            if matched:
+                break
+        result[field] = matched
+    return result
+
 
 # --------------------------------------------------------------
 # sla is stored as text like "48 hours" or "24 hours".
@@ -97,35 +138,57 @@ def format_duration(delay_days: float) -> str:
         return f"{sign}{hours} Hours"
 
 
-def process_excel(filepath: str) -> Tuple[List[dict], dict]:
+def process_excel(filepath: str, penalty_per_block: float = 1000.0) -> Tuple[List[dict], dict, dict]:
     """
     main function. reads the excel, runs the same logic as the
-    vba macro, returns a list of records + a summary dict.
+    vba macro, returns (records, summary, column_mapping).
 
-    returns (records, summary)
+    penalty_per_block: ₹ charged per full 24h delay block (default ₹1,000).
+    column_mapping shows which columns were matched from the file.
     """
     df = pd.read_excel(filepath, engine="openpyxl")
+
+    # detect columns
+    col_map = detect_columns(df)
+    missing = [k for k, v in col_map.items() if v is None]
+
+    cid_col = col_map.get("complaint_id")
+    sla_col = col_map.get("sla")
+    dt_col = col_map.get("complaint_dt")
+    close_col = col_map.get("close_dt")
+    ro_code_col = col_map.get("ro_code")
+    ro_name_col = col_map.get("ro_name")
+    vendor_col = col_map.get("vendor")
+    remarks_col = col_map.get("vendor_remarks")
+    eng_col = col_map.get("engineer")
+    nature_col = col_map.get("nature")
+    du_col = col_map.get("du_serial")
+    mode_col = col_map.get("comp_mode")
+
+    # if complaint id is missing, nothing we can do
+    if not cid_col:
+        return [], {"error": "Could not find Complaint ID column. Check file headers."}, col_map
 
     records = []
     early = delayed = on_time = pending = 0
     total_penalty = 0.0
 
     for _, row in df.iterrows():
-        cid = row.get(COL_COMPLAINT_ID)
+        cid = row.get(cid_col) if cid_col else None
         if pd.isna(cid):
             continue
 
-        sla_text = row.get(COL_SLA, "")
-        assign_raw = row.get(COL_COMPLAINT_DT)
-        close_raw = row.get(COL_VENDOR_CLOSE)
-        ro_code = row.get(COL_RO_CODE)
-        ro_name = row.get(COL_RO_NAME)
-        vendor = row.get(COL_VENDOR_CODE)
-        remarks = row.get(COL_VENDOR_REMARKS, "")
-        engineer = row.get(COL_ENGINEER, "")
-        nature = row.get(COL_NATURE, "")
-        du_serial = row.get(COL_DU_SERIAL, "")
-        comp_mode = row.get(COL_COMP_MODE, "")
+        sla_text = row.get(sla_col, "") if sla_col else ""
+        assign_raw = row.get(dt_col) if dt_col else None
+        close_raw = row.get(close_col) if close_col else None
+        ro_code = row.get(ro_code_col) if ro_code_col else None
+        ro_name = row.get(ro_name_col) if ro_name_col else None
+        vendor = row.get(vendor_col) if vendor_col else None
+        remarks = row.get(remarks_col, "") if remarks_col else ""
+        engineer = row.get(eng_col, "") if eng_col else ""
+        nature = row.get(nature_col, "") if nature_col else ""
+        du_serial = row.get(du_col, "") if du_col else ""
+        comp_mode = row.get(mode_col, "") if mode_col else ""
 
         close_dt = parse_datetime(close_raw)
         assign_dt = parse_datetime(assign_raw)
@@ -160,7 +223,7 @@ def process_excel(filepath: str) -> Tuple[List[dict], dict]:
             elif delay_hours >= DELAYED_THRESHOLD_HOURS:
                 status = "Delayed"
                 delayed += 1
-                penalty = int(delay_hours / 24) * 1000
+                penalty = int(delay_hours / 24) * penalty_per_block
                 total_penalty += penalty
             else:
                 status = "On Time"
@@ -195,7 +258,7 @@ def process_excel(filepath: str) -> Tuple[List[dict], dict]:
         "total_penalty": total_penalty,
     }
 
-    return records, summary
+    return records, summary, col_map
 
 
 # --------------------------------------------------------------
@@ -272,7 +335,11 @@ def analyse_du_revisits(records: List[dict], window_days: int = 30) -> List[dict
     """
     finds DU serials that appear multiple times within window_days.
     if the same equipment breaks again quickly, the fix was incomplete.
+    
+    window_days defaults to config/settings.yaml → revisit.window_days.
     """
+    if window_days is None:
+        window_days = get_revisit_window()
     by_du = defaultdict(list)
     for r in records:
         du = r.get("du_serial")
@@ -334,14 +401,79 @@ def analyse_modes(records: List[dict]) -> List[dict]:
     return result
 
 
+def analyse_vendors(records: List[dict]) -> List[dict]:
+    """
+    per-vendor stats — penalty, delays, complaint volume.
+    """
+    by_v = defaultdict(lambda: {"total": 0, "delayed": 0, "early": 0, "ontime": 0, "pending": 0, "penalty": 0})
+    for r in records:
+        v = r.get("vendor_code")
+        if not v or str(v).strip().upper() in ("NA", "NONE", ""):
+            continue
+        by_v[v]["total"] += 1
+        by_v[v]["penalty"] += r["penalty"]
+        if r["status"] == "Delayed":
+            by_v[v]["delayed"] += 1
+        elif r["status"] == "Early":
+            by_v[v]["early"] += 1
+        elif r["status"] == "On Time":
+            by_v[v]["ontime"] += 1
+        else:
+            by_v[v]["pending"] += 1
+
+    result = []
+    for v, d in sorted(by_v.items(), key=lambda x: x[1]["penalty"], reverse=True):
+        result.append({
+            "vendor": v,
+            "total": d["total"],
+            "delayed": d["delayed"],
+            "early": d["early"],
+            "ontime": d["ontime"],
+            "pending": d["pending"],
+            "compliance_rate": round((d["early"] + d["ontime"]) / d["total"] * 100, 1) if d["total"] else 0,
+            "penalty": d["penalty"],
+        })
+    return result
+
+
+def analyse_ros(records: List[dict]) -> List[dict]:
+    """
+    per-ro stats — which retail outlets have the most issues.
+    """
+    by_ro = defaultdict(lambda: {"ro_name": "", "total": 0, "delayed": 0, "penalty": 0})
+    for r in records:
+        ro = r.get("ro_code")
+        if not ro or str(ro).strip().upper() in ("NA", "NONE", ""):
+            continue
+        by_ro[ro]["ro_name"] = r.get("ro_name", "")
+        by_ro[ro]["total"] += 1
+        by_ro[ro]["penalty"] += r["penalty"]
+        if r["status"] == "Delayed":
+            by_ro[ro]["delayed"] += 1
+
+    result = []
+    for ro, d in sorted(by_ro.items(), key=lambda x: x[1]["penalty"], reverse=True):
+        result.append({
+            "ro_code": ro,
+            "ro_name": d["ro_name"],
+            "total": d["total"],
+            "delayed": d["delayed"],
+            "delay_rate": round(d["delayed"] / d["total"] * 100, 1) if d["total"] else 0,
+            "penalty": d["penalty"],
+        })
+    return result
+
+
 def generate_report_html(records: List[dict], summary: dict) -> str:
     """
     builds a clean html report string for pdf / print.
     """
     natures = analyse_natures(records)
     engineers = analyse_engineers(records)
-    revisits = analyse_du_revisits(records)
+    revisits = analyse_du_revisits(records, window_days=None)  # None = read from config
     modes = analyse_modes(records)
+    vendors = analyse_vendors(records)
+    ros = analyse_ros(records)
 
     lines = []
     lines.append("""<!DOCTYPE html><html><head><meta charset='utf-8'>
@@ -361,7 +493,7 @@ tr:hover { background: #eaf2f8; }
 .footer { margin-top: 40px; font-size: 12px; color: #888; border-top: 1px solid #ddd; padding-top: 10px; }
 </style></head><body>""")
 
-    lines.append("<h1>ComplaintGuard — SLA Compliance Report</h1>")
+    lines.append("<h1>ComplaintGuard SLA Compliance Report</h1>")
     lines.append(f"<p>Generated: {datetime.now().strftime('%d-%b-%Y %I:%M %p')}</p>")
 
     lines.append("<div class='summary'>")
@@ -400,6 +532,20 @@ tr:hover { background: #eaf2f8; }
     for m in modes:
         lines.append(f"<tr><td>{m['mode']}</td><td>{m['total']}</td><td>{m['delayed']}</td>"
                      f"<td>{m['delay_rate']}%</td><td>₹{m['penalty']:,}</td></tr>")
+    lines.append("</table>")
+
+    lines.append("<h2>Vendor Performance</h2><table>")
+    lines.append("<tr><th>Vendor</th><th>Total</th><th>Delayed</th><th>Compliance%</th><th>Penalty</th></tr>")
+    for v in vendors[:20]:
+        lines.append(f"<tr><td>{v['vendor']}</td><td>{v['total']}</td><td>{v['delayed']}</td>"
+                     f"<td>{v['compliance_rate']}%</td><td>₹{v['penalty']:,}</td></tr>")
+    lines.append("</table>")
+
+    lines.append("<h2>Retail Outlet Issues</h2><table>")
+    lines.append("<tr><th>RO Code</th><th>RO Name</th><th>Total</th><th>Delayed</th><th>Delay%</th><th>Penalty</th></tr>")
+    for r in ros[:20]:
+        lines.append(f"<tr><td>{r['ro_code']}</td><td>{r['ro_name']}</td><td>{r['total']}</td>"
+                     f"<td>{r['delayed']}</td><td>{r['delay_rate']}%</td><td>₹{r['penalty']:,}</td></tr>")
     lines.append("</table>")
 
     lines.append("<div class='footer'>Generated by ComplaintGuard • IOCL SLA Compliance Tool</div>")

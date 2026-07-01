@@ -1,0 +1,88 @@
+# ─────────────────────────────────────────────────────
+# ComplaintGuard — SLA Compliance Tool
+# Edit this file to change behaviour without touching code.
+# ─────────────────────────────────────────────────────
+
+penalty:
+  per_block: 1000           # ₹ charged per full 24-hour delay block
+  currency: "₹"
+
+revisit:
+  window_days: 30           # days within which same-DU repeat = revisit
+
+columns:
+  complaint_id:
+    - "Complaint ID"
+    - "Ticket ID"
+    - "Complaint No"
+    - "ID"
+    - "Ticket Number"
+    - "Issue ID"
+  sla:
+    - "Complaint Resolution Time"
+    - "SLA"
+    - "Resolution Time"
+    - "SLA Hours"
+    - "Response Time"
+    - "SLA (Hours)"
+    - "TAT"
+  complaint_dt:
+    - "Complaint DateTime"
+    - "Complaint Date"
+    - "Logged Date"
+    - "Created Date"
+    - "Complaint Date Time"
+    - "Ticket Date"
+  close_dt:
+    - "Vendor Close DateTime"
+    - "Close DateTime"
+    - "Closed Date"
+    - "Resolution Date"
+    - "Vendor Closed Date"
+    - "Close Date"
+  ro_code:
+    - "RO Code"
+    - "Dealer Code"
+    - "Retail Outlet Code"
+    - "Outlet Code"
+  ro_name:
+    - "RO Name"
+    - "Dealer Name"
+    - "Retail Outlet Name"
+    - "Outlet Name"
+  vendor:
+    - "Vendor Code"
+    - "Vendor"
+    - "Vendor Name"
+    - "Supplier"
+  vendor_remarks:
+    - "Vendor Remarks"
+    - "Remarks"
+    - "Closure Remarks"
+    - "Work Done"
+    - "Technician Remarks"
+  engineer:
+    - "Engineer Name"
+    - "Engineer"
+    - "Technician"
+    - "Assigned To"
+    - "Engineer Assigned"
+  nature:
+    - "Nature of Complaint"
+    - "Nature"
+    - "Complaint Type"
+    - "Issue Type"
+    - "Problem Category"
+  du_serial:
+    - "DU serial No"
+    - "DU Serial"
+    - "Serial No"
+    - "Equipment Serial"
+    - "DU Number"
+    - "Device ID"
+  comp_mode:
+    - "Comp Mode"
+    - "Complaint Mode"
+    - "Mode"
+    - "Source"
+    - "Channel"

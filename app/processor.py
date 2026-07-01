@@ -34,11 +34,13 @@ COL_VENDOR_REMARKS = "Vendor Remarks"
 SLA_PATTERN = re.compile(r"(\d+)\s*hours?", re.IGNORECASE)
 
 # --------------------------------------------------------------
-# if the delay is less than this many hours, we call it "on time"
-# even if technically a few minutes late. stops the "+0 Hours"
-# nonsense we saw in the vba version.
+# thresholds matching the vba macro exactly:
+#  - any negative diff = early
+#  - >= 1 hour late = delayed
+#  - everything between = on time
 # --------------------------------------------------------------
-ON_TIME_THRESHOLD_HOURS = 1.0
+EARLY_THRESHOLD_DAYS = -0.00001        # anything even slightly early
+DELAYED_THRESHOLD_HOURS = 1.0          # 1 hour = 1/24 days
 
 
 def parse_sla(text: str) -> Optional[float]:
@@ -175,11 +177,11 @@ def process_excel(filepath: str) -> Tuple[List[dict], dict]:
             # build the text representation
             dur_text = format_duration(delay_days)
 
-            # decide status
-            if delay_hours < -ON_TIME_THRESHOLD_HOURS:
+            # decide status — exact vba logic
+            if delay_days < EARLY_THRESHOLD_DAYS:
                 status = "Early"
                 early += 1
-            elif delay_hours > ON_TIME_THRESHOLD_HOURS:
+            elif delay_hours >= DELAYED_THRESHOLD_HOURS:
                 status = "Delayed"
                 delayed += 1
                 penalty = int(delay_hours / 24) * 1000
